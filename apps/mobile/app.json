@@ -1,0 +1,39 @@
+{
+  "expo": {
+    "name": "Chatterly",
+    "slug": "chatterly",
+    "scheme": "chatterly",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "@react-native-firebase/app",
+      "@react-native-firebase/auth",
+      "expo-notifications",
+      ["expo-build-properties", { "android": { "usesCleartextTraffic": true } }],
+      [
+        "expo-contacts",
+        { "contactsPermission": "Chatterly checks which of your contacts are on the app. Numbers are hashed on your device before they are sent." }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Chatterly needs access to your photos so you can share images.",
+          "cameraPermission": "Chatterly needs camera access so you can take photos to share."
+        }
+      ],
+      [
+        "expo-av",
+        { "microphonePermission": "Chatterly needs microphone access so you can record voice notes." }
+      ]
+    ],
+    "android": {
+      "package": "com.zecathon.chatterly",
+      "googleServicesFile": "./google-services.json"
+    },
+    "ios": { "bundleIdentifier": "com.zecathon.chatterly" },
+    "web": { "bundler": "metro", "output": "single" }
+  }
+}

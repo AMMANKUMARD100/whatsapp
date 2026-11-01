@@ -1,7 +1,8 @@
-export type MediaKind = 'image' | 'audio' | 'document';
+export type MediaKind = 'image' | 'video' | 'audio' | 'document';
 
 export const LIMITS: Record<MediaKind, { maxBytes: number }> = {
   image: { maxBytes: 15 * 1024 * 1024 },    // 15 MB
+  video: { maxBytes: 40 * 1024 * 1024 },    // 40 MB
   audio: { maxBytes: 20 * 1024 * 1024 },    // 20 MB
   document: { maxBytes: 30 * 1024 * 1024 }, // 30 MB
 };
@@ -11,6 +12,9 @@ export function normalizeMimeType(kind: MediaKind, rawMime?: string | null): str
   if (kind === 'image') {
     if (clean === 'image/jpg') return 'image/jpeg';
     return clean.startsWith('image/') ? clean : 'image/jpeg';
+  }
+  if (kind === 'video') {
+    return clean.startsWith('video/') ? clean : 'video/mp4';
   }
   if (kind === 'audio') {
     return clean.startsWith('audio/') || clean === 'video/webm' ? clean : 'audio/webm';

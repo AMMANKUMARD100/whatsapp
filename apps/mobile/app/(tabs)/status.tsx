@@ -1,185 +1,381 @@
-import React, { useEffect, useState } from 'react';
-import {
-  FlatList,
-  Modal,
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { ActivityIndicator, FlatList, Image, Modal, Pressable, Text, TextInput, View } from 'react-native';
+import { ResizeMode, Video } from 'expo-av';
+import * as ImagePicker from 'expo-image-picker';
+import { assetUrl } from '../../src/core/api/assetUrl';
+import { LocalMediaUpload } from '../../src/core/services/types';
 import { useTheme } from '../../src/core/theme/ThemeProvider';
+import { useAuthStore } from '../../src/features/auth/store';
 import { Avatar } from '../../src/features/chat/components/Avatar';
-import { statusApi, type StatusItem } from '../../src/features/status/statusApi';
+import { EmptyState } from '../../src/features/chat/components/EmptyState';
+import { uploadMediaAttachment } from '../../src/features/chat/mediaApi';
+import { formatTime, friendlyError } from '../../src/features/chat/utils';
+import { statusApi, StatusItem } from '../../src/features/status/statusApi';
 
-const COLORS = ['#0E8A7D', '#202C33', '#7C4DFF', '#E5484D', '#E67E22'];
+const BG_PALETTE = ['#0E8A7D', '#7C4DFF', '#D81B60', '#E67E22', '#2980B9'];
 
-export default function StatusTabScreen() {
+export default function StatusTab() {
   const { colors, spacing, radius, typography } = useTheme();
+  const me = useAuthStore((s) => s.user);
   const [statuses, setStatuses] = useState<StatusItem[]>([]);
-  const [showCompose, setShowCompose] = useState(false);
+  const [composerOpen, setComposerOpen] = useState(false);
   const [caption, setCaption] = useState('');
-  const [bgColor, setBgColor] = useState(COLORS[0]);
-  const [viewingStatus, setViewingStatus] = useState<StatusItem | null>(null);
+  const [bgIndex, setBgIndex] = useState(0);
+  const [pickedMedia, setPickedMedia] = useState<LocalMediaUpload | null>(null);
+  const [posting, setPosting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [viewing, setViewing] = useState<StatusItem | null>(null);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     try {
-      const items = await statusApi.list();
-      setStatuses(items);
+      const res = await statusApi.list();
+      setStatuses(res.statuses);
     } catch {
-      // ignore
+      // ignore offline
     }
-  };
+  }, []);
 
   useEffect(() => {
     void load();
-  }, []);
+  }, [load]);
 
-  const handlePost = async () => {
-    if (!caption.trim()) return;
+  const openTextComposer = () => {
+    setPickedMedia(null);
+    setCaption('');
+    setError(null);
+    setComposerOpen(true);
+  };
+
+  const pickStatusMedia = async (wantVideo: boolean) => {
+    setError(null);
     try {
-      await statusApi.create({ caption: caption.trim(), bgColor });
-      setCaption('');
-      setShowCompose(false);
-      await load();
+      const res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: wantVideo ? ImagePicker.MediaTypeOptions.Videos : ImagePicker.MediaTypeOptions.Images,
+        quality: 0.85,
+      });
+      const asset = res.assets?.[0];
+      if (res.canceled || !asset) return;
+
+      const isVideo = wantVideo || asset.type === 'video' || (asset.mimeType?.startsWith('video/') ?? false);
+      setPickedMedia({
+        uri: asset.uri,
+        kind: isVideo ? 'video' : 'image',
+        mimeType: asset.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg'),
+        sizeBytes: asset.fileSize,
+        fileName: asset.fileName || (isVideo ? `status-${Date.now()}.mp4` : `status-${Date.now()}.jpg`),
+        width: asset.width,
+        height: asset.height,
+        durationMs: asset.duration ?? undefined,
+      });
+      setComposerOpen(true);
     } catch {
-      // ignore
+      setError('Could not open your photo/video library.');
     }
   };
 
-  const openStatus = (s: StatusItem) => {
-    setViewingStatus(s);
-    if (!s.viewedByMe) {
-      void statusApi.markViewed(s.id);
+  const postStatus = async () => {
+    if (!caption.trim() && !pickedMedia) {
+      setError('Type a status or attach a photo/video');
+      return;
+    }
+    setPosting(true);
+    setError(null);
+    try {
+      let mediaId: string | undefined;
+      if (pickedMedia) {
+        const uploaded = await uploadMediaAttachment(pickedMedia);
+        mediaId = uploaded.id;
+      }
+      await statusApi.create({
+        caption: caption.trim() || undefined,
+        bgColor: BG_PALETTE[bgIndex],
+        mediaId,
+      });
+      setCaption('');
+      setPickedMedia(null);
+      setComposerOpen(false);
+      await load();
+    } catch (err) {
+      setError(friendlyError(err));
+    } finally {
+      setPosting(false);
+    }
+  };
+
+  const openStory = (item: StatusItem) => {
+    setViewing(item);
+    if (item.userId !== me?.id && !item.viewedByMe) {
+      statusApi.markViewed(item.id).then(load).catch(() => undefined);
     }
   };
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
-      <Pressable
-        onPress={() => setShowCompose(true)}
-        style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          padding: spacing.lg,
-          borderBottomWidth: 1,
-          borderBottomColor: colors.border,
-        }}
-      >
-        <Avatar name="My Status" color={colors.primary} size={50} />
-        <View style={{ marginLeft: spacing.md, flex: 1 }}>
-          <Text style={[typography.heading, { color: colors.textPrimary }]}>My Status</Text>
-          <Text style={{ color: colors.textSecondary, fontSize: 13 }}>Tap to add status update</Text>
-        </View>
-        <Text style={{ fontSize: 24, color: colors.primary }}>✏️</Text>
-      </Pressable>
-
-      <Text
-        style={[
-          typography.caption,
-          { color: colors.textSecondary, paddingHorizontal: spacing.lg, marginTop: spacing.md, marginBottom: spacing.xs },
-        ]}
-      >
-        RECENT UPDATES
-      </Text>
-
       <FlatList
         data={statuses}
-        keyExtractor={(item) => item.id}
-        renderItem={({ item }) => (
-          <Pressable
-            onPress={() => openStatus(item)}
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              paddingHorizontal: spacing.lg,
-              paddingVertical: spacing.md,
-            }}
-          >
-            <Avatar name={item.userName} uri={item.userAvatarUrl} size={50} color={item.bgColor} />
-            <View style={{ marginLeft: spacing.md, flex: 1 }}>
-              <Text style={[typography.heading, { color: colors.textPrimary }]}>{item.userName}</Text>
-              <Text style={{ color: colors.textSecondary, fontSize: 13 }} numberOfLines={1}>
-                {item.caption || 'Photo'}
-              </Text>
+        keyExtractor={(s) => s.id}
+        ListHeaderComponent={
+          <View style={{ padding: spacing.lg }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md }}>
+              <Avatar name={me?.name ?? 'Me'} uri={assetUrl(me?.avatarUrl)} />
+              <View style={{ flex: 1 }}>
+                <Text style={[typography.heading, { color: colors.textPrimary }]}>My status</Text>
+                <Text style={{ color: colors.textSecondary, fontSize: 13 }}>
+                  Share text, photos, or videos that disappear in 24 hours
+                </Text>
+              </View>
             </View>
-            <Text style={{ fontSize: 12, color: colors.textSecondary }}>
-              👁️ {item.viewCount}
+
+            {/* Action buttons for Text, Photo, and Video Status */}
+            <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md }}>
+              <Pressable
+                onPress={openTextComposer}
+                style={{
+                  flex: 1,
+                  backgroundColor: colors.surfaceAlt,
+                  paddingVertical: spacing.sm + 2,
+                  borderRadius: radius.md,
+                  alignItems: 'center',
+                }}
+              >
+                <Text style={{ color: colors.textPrimary, fontWeight: '600' }}>✏️ Text</Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() => void pickStatusMedia(false)}
+                style={{
+                  flex: 1,
+                  backgroundColor: colors.primary,
+                  paddingVertical: spacing.sm + 2,
+                  borderRadius: radius.md,
+                  alignItems: 'center',
+                }}
+              >
+                <Text style={{ color: colors.onPrimary, fontWeight: '700' }}>📷 Photo</Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() => void pickStatusMedia(true)}
+                style={{
+                  flex: 1,
+                  backgroundColor: colors.primary,
+                  paddingVertical: spacing.sm + 2,
+                  borderRadius: radius.md,
+                  alignItems: 'center',
+                }}
+              >
+                <Text style={{ color: colors.onPrimary, fontWeight: '700' }}>🎥 Video</Text>
+              </Pressable>
+            </View>
+
+            {error && !composerOpen && (
+              <Text style={{ color: colors.danger, marginTop: spacing.sm }}>{error}</Text>
+            )}
+
+            <Text style={[typography.heading, { color: colors.primary, marginTop: spacing.lg }]}>
+              Recent updates
             </Text>
-          </Pressable>
-        )}
+          </View>
+        }
+        renderItem={({ item }) => {
+          const mediaLabel =
+            item.mediaKind === 'video' ? '🎥 Video' : item.mediaKind === 'image' ? '📷 Photo' : '✏️ Text';
+          return (
+            <Pressable
+              onPress={() => openStory(item)}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: spacing.md,
+                paddingHorizontal: spacing.lg,
+                paddingVertical: spacing.sm,
+              }}
+            >
+              <View
+                style={{
+                  padding: 2,
+                  borderRadius: 28,
+                  borderWidth: 2,
+                  borderColor: item.viewedByMe ? colors.border : colors.primary,
+                }}
+              >
+                <Avatar name={item.userName} uri={assetUrl(item.userAvatarUrl)} size={46} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: colors.textPrimary, fontWeight: '600', fontSize: 16 }}>
+                  {item.userId === me?.id ? 'You' : item.userName}
+                </Text>
+                <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 12 }}>
+                  {mediaLabel}
+                  {item.caption ? ` · ${item.caption}` : ''} · {formatTime(item.createdAt)} · {item.viewCount} views
+                </Text>
+              </View>
+            </Pressable>
+          );
+        }}
+        ListEmptyComponent={<EmptyState title="No status updates" subtitle="Tap Photo, Video, or Text above to post a story." />}
       />
 
-      <Modal visible={showCompose} animationType="slide">
-        <View style={{ flex: 1, backgroundColor: bgColor, padding: spacing.xl, justifyContent: 'center' }}>
-          <Pressable
-            onPress={() => setShowCompose(false)}
-            style={{ position: 'absolute', top: 50, right: 20, padding: 10 }}
-          >
-            <Text style={{ color: '#FFFFFF', fontSize: 22, fontWeight: '700' }}>✕</Text>
-          </Pressable>
+      {/* Composer modal (supports Text, Image preview, or Video preview + caption) */}
+      <Modal visible={composerOpen} animationType="slide" onRequestClose={() => !posting && setComposerOpen(false)}>
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: pickedMedia ? '#000' : BG_PALETTE[bgIndex],
+            justifyContent: 'center',
+            padding: spacing.xl,
+          }}
+        >
+          {pickedMedia?.kind === 'image' && (
+            <Image
+              source={{ uri: pickedMedia.uri }}
+              resizeMode="contain"
+              style={{ width: '100%', height: '58%', marginBottom: spacing.md }}
+            />
+          )}
+
+          {pickedMedia?.kind === 'video' && (
+            <Video
+              source={{ uri: pickedMedia.uri }}
+              style={{ width: '100%', height: '58%', marginBottom: spacing.md }}
+              resizeMode={ResizeMode.CONTAIN}
+              useNativeControls
+              shouldPlay
+              isLooping
+            />
+          )}
 
           <TextInput
             value={caption}
             onChangeText={setCaption}
-            placeholder="Type a status…"
-            placeholderTextColor="rgba(255,255,255,0.6)"
+            placeholder={pickedMedia ? 'Add a caption…' : 'Type a status…'}
+            placeholderTextColor="rgba(255,255,255,0.65)"
             multiline
-            autoFocus
+            maxLength={500}
             style={{
-              color: '#FFFFFF',
-              fontSize: 28,
+              color: '#fff',
+              fontSize: pickedMedia ? 18 : 26,
+              fontWeight: '700',
               textAlign: 'center',
-              fontWeight: '600',
+              backgroundColor: pickedMedia ? 'rgba(255,255,255,0.12)' : 'transparent',
+              borderRadius: radius.md,
+              padding: spacing.md,
             }}
           />
 
-          <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 12, marginTop: 40 }}>
-            {COLORS.map((c) => (
-              <Pressable
-                key={c}
-                onPress={() => setBgColor(c)}
-                style={{
-                  width: 36,
-                  height: 36,
-                  borderRadius: 18,
-                  backgroundColor: c,
-                  borderWidth: 2,
-                  borderColor: bgColor === c ? '#FFFFFF' : 'transparent',
-                }}
-              />
-            ))}
-          </View>
+          {error && <Text style={{ color: '#ff6b6b', textAlign: 'center', marginTop: spacing.sm }}>{error}</Text>}
 
-          <Pressable
-            onPress={handlePost}
+          <View
             style={{
-              marginTop: 40,
-              backgroundColor: '#FFFFFF',
-              alignSelf: 'center',
-              paddingHorizontal: 32,
-              paddingVertical: 12,
-              borderRadius: radius.pill,
+              position: 'absolute',
+              bottom: 36,
+              left: 20,
+              right: 20,
+              flexDirection: 'row',
+              justifyContent: 'space-between',
+              alignItems: 'center',
             }}
           >
-            <Text style={{ color: bgColor, fontWeight: '700', fontSize: 16 }}>Post</Text>
-          </Pressable>
+            <View style={{ flexDirection: 'row', gap: spacing.md }}>
+              {!pickedMedia && (
+                <Pressable onPress={() => setBgIndex((i) => (i + 1) % BG_PALETTE.length)}>
+                  <Text style={{ color: '#fff', fontSize: 15, fontWeight: '600' }}>🎨 Color</Text>
+                </Pressable>
+              )}
+              <Pressable onPress={() => void pickStatusMedia(false)} disabled={posting}>
+                <Text style={{ color: '#fff', fontSize: 15, fontWeight: '600' }}>📷 Photo</Text>
+              </Pressable>
+              <Pressable onPress={() => void pickStatusMedia(true)} disabled={posting}>
+                <Text style={{ color: '#fff', fontSize: 15, fontWeight: '600' }}>🎥 Video</Text>
+              </Pressable>
+            </View>
+
+            <View style={{ flexDirection: 'row', gap: spacing.lg, alignItems: 'center' }}>
+              <Pressable
+                onPress={() => {
+                  setPickedMedia(null);
+                  setComposerOpen(false);
+                }}
+                disabled={posting}
+              >
+                <Text style={{ color: '#fff', fontSize: 16 }}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                onPress={postStatus}
+                disabled={posting}
+                style={{
+                  backgroundColor: colors.primary,
+                  paddingHorizontal: spacing.lg,
+                  paddingVertical: spacing.sm,
+                  borderRadius: radius.pill,
+                }}
+              >
+                {posting ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>Post ➤</Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
         </View>
       </Modal>
 
-      <Modal visible={!!viewingStatus} animationType="fade" onRequestClose={() => setViewingStatus(null)}>
-        {viewingStatus && (
-          <Pressable
-            onPress={() => setViewingStatus(null)}
-            style={{ flex: 1, backgroundColor: viewingStatus.bgColor, padding: spacing.xl, justifyContent: 'center' }}
+      {/* Full-screen Story Viewer Modal (plays Videos & shows Photos + Captions) */}
+      <Modal visible={!!viewing} transparent animationType="fade" onRequestClose={() => setViewing(null)}>
+        {viewing && (
+          <View
+            style={{
+              flex: 1,
+              backgroundColor: viewing.mediaUrl ? '#000' : viewing.bgColor,
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: spacing.lg,
+            }}
           >
-            <Text style={{ color: '#FFFFFF', fontSize: 32, textAlign: 'center', fontWeight: '600' }}>
-              {viewingStatus.caption}
+            <Pressable
+              onPress={() => setViewing(null)}
+              style={{ position: 'absolute', top: 44, right: 20, zIndex: 10, padding: 10 }}
+            >
+              <Text style={{ color: '#fff', fontSize: 22, fontWeight: '700' }}>✕</Text>
+            </Pressable>
+
+            {viewing.mediaUrl && viewing.mediaKind === 'video' && (
+              <Video
+                source={{ uri: assetUrl(viewing.mediaUrl) ?? viewing.mediaUrl }}
+                style={{ width: '100%', height: '72%' }}
+                resizeMode={ResizeMode.CONTAIN}
+                useNativeControls
+                shouldPlay
+              />
+            )}
+
+            {viewing.mediaUrl && viewing.mediaKind !== 'video' && (
+              <Image
+                source={{ uri: assetUrl(viewing.mediaUrl) ?? viewing.mediaUrl }}
+                resizeMode="contain"
+                style={{ width: '100%', height: '72%' }}
+              />
+            )}
+
+            {viewing.caption && (
+              <Text
+                style={{
+                  color: '#fff',
+                  fontSize: viewing.mediaUrl ? 18 : 26,
+                  fontWeight: '700',
+                  textAlign: 'center',
+                  marginTop: spacing.md,
+                }}
+              >
+                {viewing.caption}
+              </Text>
+            )}
+
+            <Text style={{ position: 'absolute', bottom: 32, color: 'rgba(255,255,255,0.85)', fontSize: 13 }}>
+              {viewing.userName} · {viewing.viewCount} views
             </Text>
-            <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 14, textAlign: 'center', marginTop: 20 }}>
-              Posted by {viewingStatus.userName}
-            </Text>
-          </Pressable>
+          </View>
         )}
       </Modal>
     </View>

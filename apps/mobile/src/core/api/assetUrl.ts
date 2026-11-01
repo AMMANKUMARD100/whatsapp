@@ -7,3 +7,5 @@ export function resolveAssetUrl(pathOrUrl?: string | null): string | null {
   }
   return `${API_BASE}${pathOrUrl.startsWith('/') ? '' : '/'}${pathOrUrl}`;
 }
+
+export const assetUrl = resolveAssetUrl;

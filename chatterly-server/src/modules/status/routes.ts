@@ -9,11 +9,20 @@ export async function statusRoutes(app: FastifyInstance) {
     '/status',
     {
       preHandler: app.authenticate,
-      schema: { tags: ['status'], summary: 'List active 24h status stories from me and my chat peers', security },
+      schema: { tags: ['status'], summary: 'List active 24h status stories from me and my contacts/peers', security },
     },
     async (req) => {
       const peers = await peerIds(app.db, req.user.sub);
-      const visibleUserIds = [req.user.sub, ...peers];
+      // Also include any verified user saved in user_contacts so their statuses appear too
+      const savedRes = await app.db.query<{ id: string }>(
+        `SELECT u.id
+         FROM user_contacts uc
+         JOIN users u ON u.phone_hash = uc.phone_hash
+         WHERE uc.owner_id = $1 AND u.verified_at IS NOT NULL`,
+        [req.user.sub],
+      ).catch(() => ({ rows: [] as { id: string }[] }));
+
+      const visibleUserIds = [...new Set([req.user.sub, ...peers, ...savedRes.rows.map((r) => r.id)])];
 
       const { rows } = await app.db.query<{
         id: string;
@@ -23,19 +32,23 @@ export async function statusRoutes(app: FastifyInstance) {
         caption: string | null;
         bg_color: string;
         storage_key: string | null;
+        media_kind: 'image' | 'video' | null;
+        media_mime: string | null;
         created_at: Date;
         view_count: number;
         viewed_by_me: boolean;
       }>(
         `SELECT s.id, s.user_id, u.name AS user_name, u.avatar_url AS user_avatar_url,
-                s.caption, s.bg_color, md.storage_key, s.created_at,
+                s.caption, s.bg_color,
+                md.storage_key, md.kind AS media_kind, md.mime_type AS media_mime,
+                s.created_at,
                 (SELECT count(*)::int FROM status_views sv WHERE sv.status_id = s.id) AS view_count,
                 EXISTS (SELECT 1 FROM status_views sv WHERE sv.status_id = s.id AND sv.viewer_id = $1) AS viewed_by_me
          FROM statuses s
          JOIN users u ON u.id = s.user_id
          LEFT JOIN media md ON md.id = s.media_id
          WHERE s.user_id = ANY($2::uuid[]) AND s.expires_at > now()
-         ORDER BY s.created_at ASC`,
+         ORDER BY s.created_at DESC`,
         [req.user.sub, visibleUserIds],
       );
 
@@ -47,13 +60,14 @@ export async function statusRoutes(app: FastifyInstance) {
           userAvatarUrl: r.user_avatar_url,
           caption: r.caption,
           bgColor: r.bg_color,
+          mediaKind: r.media_kind === 'video' ? 'video' : r.storage_key ? 'image' : null,
+          mediaMimeType: r.media_mime,
           mediaUrl: r.storage_key ? await signDownloadUrl(r.storage_key) : null,
           createdAt: r.created_at.getTime(),
-          viewCount: Number(r.view_count),
+          viewCount: r.view_count,
           viewedByMe: r.viewed_by_me,
         })),
       );
-
       return { statuses: items };
     },
   );
@@ -64,7 +78,7 @@ export async function statusRoutes(app: FastifyInstance) {
       preHandler: app.authenticate,
       schema: {
         tags: ['status'],
-        summary: 'Post a new status story expiring in 24 hours',
+        summary: 'Post a 24-hour text, image, or video status story',
         security,
         body: {
           type: 'object',
@@ -79,15 +93,15 @@ export async function statusRoutes(app: FastifyInstance) {
     async (req, reply) => {
       const caption = req.body.caption?.trim() || null;
       const mediaId = req.body.mediaId || null;
-      if (!caption && !mediaId) return reply.code(400).send({ error: 'Provide caption or mediaId' });
+      if (!caption && !mediaId) return reply.code(400).send({ error: 'Provide a caption, photo, or video' });
 
       if (mediaId) {
-        const { rows } = await app.db.query<{ storage_key: string; owner_id: string }>(
-          'SELECT storage_key, owner_id FROM media WHERE id = $1 AND kind = $2',
-          [mediaId, 'image'],
+        const { rows } = await app.db.query<{ storage_key: string; owner_id: string; kind: string }>(
+          'SELECT storage_key, owner_id, kind FROM media WHERE id = $1 AND kind IN ($2, $3)',
+          [mediaId, 'image', 'video'],
         );
         if (!rows[0] || rows[0].owner_id !== req.user.sub || !(await verifyObjectExists(rows[0].storage_key))) {
-          return reply.code(400).send({ error: 'Invalid status image' });
+          return reply.code(400).send({ error: 'Invalid status image or video' });
         }
       }
 

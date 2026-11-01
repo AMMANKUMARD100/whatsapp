@@ -7,6 +7,8 @@ export interface StatusItem {
   userAvatarUrl: string | null;
   caption: string | null;
   bgColor: string;
+  mediaKind: 'image' | 'video' | null;
+  mediaMimeType?: string | null;
   mediaUrl: string | null;
   createdAt: number;
   viewCount: number;
@@ -14,19 +16,8 @@ export interface StatusItem {
 }
 
 export const statusApi = {
-  list: async (): Promise<StatusItem[]> => {
-    const res = await apiFetch<{ statuses: StatusItem[] }>('/status');
-    return res.statuses;
-  },
-
-  create: async (input: { caption?: string; bgColor?: string; mediaId?: string }): Promise<{ id: string }> => {
-    return apiFetch<{ id: string }>('/status', {
-      method: 'POST',
-      body: input,
-    });
-  },
-
-  markViewed: async (statusId: string): Promise<void> => {
-    await apiFetch(`/status/${statusId}/view`, { method: 'POST' }).catch(() => undefined);
-  },
+  list: () => apiFetch<{ statuses: StatusItem[] }>('/status'),
+  create: (body: { caption?: string; bgColor?: string; mediaId?: string }) =>
+    apiFetch<{ id: string }>('/status', { method: 'POST', body }),
+  markViewed: (id: string) => apiFetch<void>(`/status/${id}/view`, { method: 'POST' }),
 };

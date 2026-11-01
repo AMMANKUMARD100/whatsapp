@@ -1,5 +1,5 @@
 export type MessageStatus = 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
-export type MediaKind = 'image' | 'audio' | 'document';
+export type MediaKind = 'image' | 'video' | 'audio' | 'document';
 
 export interface MediaAttachment {
   id: string;

@@ -38,7 +38,7 @@ export async function mediaRoutes(app: FastifyInstance) {
           type: 'object',
           required: ['kind', 'mimeType', 'sizeBytes'],
           properties: {
-            kind: { type: 'string', enum: ['image', 'audio', 'document'] },
+            kind: { type: 'string', enum: ['image', 'video', 'audio', 'document'] },
             mimeType: { type: 'string', maxLength: 120 },
             sizeBytes: { type: 'integer', minimum: 1 },
             fileName: { type: 'string', maxLength: 200 },
